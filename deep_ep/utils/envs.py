@@ -83,34 +83,49 @@ def init_dist(local_rank: int, num_local_ranks: int, seed: int = 0) -> Tuple[int
         rank: the global rank index.
         world_size: the total number of ranks.
         group: the communication group.
+
+    中文函数注释：
+        初始化当前进程的 PyTorch 分布式环境，使用 NCCL backend 建立 GPU 通信。
+        该函数会根据环境变量计算全局 rank/world size，设置当前 CUDA 设备，
+        初始化随机种子，并返回当前 rank、总 rank 数和一个包含所有 rank 的通信 group。
+
+    中文参数说明：
+        local_rank：当前进程在本机内部的 rank 编号，通常对应本机第几张 GPU。
+        num_local_ranks：本机启动的 rank 数量，通常等于本机参与测试的 GPU 数量。
+        seed：全局随机种子，后续会结合全局 rank 生成每个 rank 自己的 local seed。
+
+    中文返回值说明：
+        rank：当前进程在全局通信域中的 rank 编号。
+        world_size：整个分布式任务中的总 rank 数。
+        group：包含所有 rank 的 PyTorch 分布式通信组。
     """
     # NOTES: you may rewrite this function with your own cluster settings
-    ip = os.getenv('MASTER_ADDR', '127.0.0.1')
-    port = int(os.getenv('MASTER_PORT', '8361'))
-    num_nodes = int(os.getenv('WORLD_SIZE', 1))
-    node_rank = int(os.getenv('RANK', 0))
+    ip = os.getenv('MASTER_ADDR', '127.0.0.1')  # 读取 master 节点地址；未设置时默认使用本机 127.0.0.1。
+    port = int(os.getenv('MASTER_PORT', '8361'))  # 读取 master 端口；未设置时默认使用 8361，并转换为整数。
+    num_nodes = int(os.getenv('WORLD_SIZE', 1))  # 读取节点数量；未设置时默认单节点，并转换为整数。
+    node_rank = int(os.getenv('RANK', 0))  # 读取当前节点编号；未设置时默认是第 0 个节点，并转换为整数。
 
     # Set local rank
-    global _local_rank
-    _local_rank = local_rank
+    global _local_rank  # 声明要修改模块级全局变量 `_local_rank`。
+    _local_rank = local_rank  # 保存当前进程的本地 rank，供 dist_print 等工具函数使用。
 
-    sig = inspect.signature(dist.init_process_group)
-    params = {
-        'backend': 'nccl',
-        'init_method': f'tcp://{ip}:{port}',
-        'world_size': num_nodes * num_local_ranks,
-        'rank': node_rank * num_local_ranks + local_rank,
-    }
-    if 'device_id' in sig.parameters:
+    sig = inspect.signature(dist.init_process_group)  # 获取 `dist.init_process_group` 的函数签名，用于兼容不同 PyTorch 版本。
+    params = {  # 构造初始化 PyTorch 分布式进程组所需的参数字典。
+        'backend': 'nccl',  # 使用 NCCL backend，适合 GPU 间通信。
+        'init_method': f'tcp://{ip}:{port}',  # 使用 TCP 地址和端口作为进程组初始化 rendezvous 地址。
+        'world_size': num_nodes * num_local_ranks,  # 计算全局 rank 总数：节点数乘以每节点 rank 数。
+        'rank': node_rank * num_local_ranks + local_rank,  # 计算当前进程的全局 rank。
+    }  # 分布式初始化参数构造完成。
+    if 'device_id' in sig.parameters:  # 如果当前 PyTorch 版本支持 `device_id` 参数，则显式传入 CUDA 设备。
         # noinspection PyTypeChecker
-        params['device_id'] = torch.device(f'cuda:{local_rank}')
-    dist.init_process_group(**params)
-    torch.set_default_dtype(torch.bfloat16)
-    torch.set_default_device('cuda')
-    torch.cuda.set_device(local_rank)
+        params['device_id'] = torch.device(f'cuda:{local_rank}')  # 将当前 local rank 对应的 CUDA 设备写入初始化参数。
+    dist.init_process_group(**params)  # 根据参数初始化 PyTorch 分布式进程组。
+    torch.set_default_dtype(torch.bfloat16)  # 将 PyTorch 默认 dtype 设置为 bfloat16，贴近 DeepEP 测试数据类型。
+    torch.set_default_device('cuda')  # 将 PyTorch 默认设备设置为 CUDA，后续 tensor 默认创建在 GPU 上。
+    torch.cuda.set_device(local_rank)  # 将当前进程绑定到 local_rank 对应的 GPU。
 
-    init_seed(seed)
-    return dist.get_rank(), dist.get_world_size(), dist.new_group(list(range(num_local_ranks * num_nodes)))
+    init_seed(seed)  # 初始化随机种子；内部会用 global seed 加当前全局 rank 得到 local seed。
+    return dist.get_rank(), dist.get_world_size(), dist.new_group(list(range(num_local_ranks * num_nodes)))  # 返回当前全局 rank、总 rank 数，以及包含所有 rank 的新通信组。
 
 
 def get_physical_domain_size(group: dist.ProcessGroup) -> Tuple[int, int]:
