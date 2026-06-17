@@ -174,7 +174,7 @@ def main():
     )
     group = dist.new_group([0])
 
-    hidden = 128
+    hidden = 256
     num_tokens = 16
     num_topk = 1
     num_experts = 1

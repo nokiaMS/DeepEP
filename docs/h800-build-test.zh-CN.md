@@ -180,11 +180,35 @@ python3 -m pip install --target /userdata/guoxu/deepep-build/deps 'nvidia-nccl-c
 ```bash
 PYTHONPATH=/userdata/guoxu/deepep-build/deps python3 -m pip show nvidia-nccl-cu12
 ```
-
 本次验证版本：
 
 ```text
 nvidia-nccl-cu12 2.30.7
+```
+
+```
+root@gx-test-inst1-0:/userdata/guoxu/deepep-build/DeepEP# python3 -m pip install --target /userdata/guoxu/deepep-build/deps 'nvidia-nccl-cu12>=2.30.4' --no-deps
+Collecting nvidia-nccl-cu12>=2.30.4
+  Using cached nvidia_nccl_cu12-2.30.7-py3-none-manylinux_2_18_x86_64.whl.metadata (2.1 kB)
+Using cached nvidia_nccl_cu12-2.30.7-py3-none-manylinux_2_18_x86_64.whl (303.4 MB)
+Installing collected packages: nvidia-nccl-cu12
+Successfully installed nvidia-nccl-cu12-2.30.7
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 26.0.1 -> 26.1.2
+[notice] To update, run: python3 -m pip install --upgrade pip
+root@gx-test-inst1-0:/userdata/guoxu/deepep-build/DeepEP# PYTHONPATH=/userdata/guoxu/deepep-build/deps python3 -m pip show nvidia-nccl-cu12
+Name: nvidia-nccl-cu12
+Version: 2.30.7
+Summary: NVIDIA Collective Communication Library (NCCL) Runtime
+Home-page: https://developer.nvidia.com/cuda-zone
+Author: Nvidia CUDA Installer Team
+Author-email: compute_installer@nvidia.com
+License-Expression: LicenseRef-NVIDIA-Proprietary
+Location: /userdata/guoxu/deepep-build/deps
+Requires: 
+Required-by: torch
+root@gx-test-inst1-0:/userdata/guoxu/deepep-build/DeepEP# 
 ```
 
 ## 5. 编译环境变量
@@ -248,6 +272,13 @@ ls -lh dist
 dist/deep_ep-2.0.0+local-cp312-cp312-linux_x86_64.whl
 ```
 
+```
+root@gx-test-inst1-0:/userdata/guoxu/deepep-build/DeepEP# ls -lh dist
+total 15M
+-rw-r--r-- 1 root root 15M Jun 17 20:58 deep_ep-2.0.0+local-cp312-cp312-linux_x86_64.whl
+root@gx-test-inst1-0:/userdata/guoxu/deepep-build/DeepEP# 
+```
+
 ## 7. 编译后 smoke test
 
 仓库内提供了一个最小 H800 smoke test：
@@ -271,13 +302,12 @@ tests/test_h800_smoke.py
 ```bash
 cd /userdata/guoxu/deepep-build/DeepEP
 
-export PYTHONPATH=/userdata/guoxu/deepep-build/DeepEP/build/lib.linux-x86_64-cpython-312:\
-/userdata/guoxu/deepep-build/deps
+BUILD_LIB=$(find build -maxdepth 1 -type d -name 'lib.linux-x86_64-cpython-*' | head -n 1)
+echo "$BUILD_LIB"
+ls -l "$BUILD_LIB/deep_ep/_C"*.so
 
-export LD_LIBRARY_PATH=/userdata/guoxu/deepep-build/deps/nvidia/nccl/lib:\
-/usr/local/lib/python3.12/dist-packages/nvidia/nvshmem/lib:\
-/usr/local/cuda/lib64:\
-/usr/local/nvidia/lib64
+export PYTHONPATH="$BUILD_LIB:/userdata/guoxu/deepep-build/deps"
+export LD_LIBRARY_PATH="/userdata/guoxu/deepep-build/deps/nvidia/nccl/lib:/usr/local/lib/python3.12/dist-packages/nvidia/nvshmem/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib64"
 
 export CPATH=/userdata/guoxu/deepep-build/deps/nvidia/nccl/include:\
 /usr/local/lib/python3.12/dist-packages/nvidia/cuda_runtime/include:\
@@ -298,6 +328,12 @@ export EP_JIT_PRINT_COMPILER_COMMAND=1
 python3 tests/test_h800_smoke.py
 ```
 
+注意：
+
+- 必须使用 `python3 tests/test_h800_smoke.py` 运行，不要直接执行 `tests/test_h800_smoke.py`。该文件是 Python 程序，不是 shell 脚本。
+- `PYTHONPATH` 必须包含 `build/lib.linux-x86_64-cpython-312` 这样的 build 输出目录，否则会报 `No module named 'deep_ep._C'`。
+- `LD_LIBRARY_PATH` 建议按上面的单行双引号形式复制，不要把 `/usr/local/nvidia/lib64` 拆成单独一行。
+
 本次验证通过输出：
 
 ```text
@@ -306,10 +342,17 @@ Compute capability: (9, 0)
 PyTorch: 2.10.0+cu129, CUDA: 12.9
 DeepEP: 2.0.0
 SM90 compiled: True
+Running NVCC command: cd /userdata/guoxu/deepep-build/jit-cache/tmp && /usr/local/cuda/bin/nvcc ... --gpu-architecture=sm_90a ...
 DeepEP H800 smoke test passed
 ```
 
 首次运行会打印 JIT 的 `nvcc` 命令，并生成 `sm_90a` cubin。后续运行会复用 `EP_JIT_CACHE_DIR`。
+
+补充说明：
+
+- 如果看到 `tests/test_h800_smoke.py: line 1: import: command not found`，说明直接执行了 Python 文件。正确命令是 `python3 tests/test_h800_smoke.py`。
+- 如果看到 `ModuleNotFoundError: No module named 'deep_ep._C'`，先确认 `BUILD_LIB=$(find build -maxdepth 1 -type d -name 'lib.linux-x86_64-cpython-*' | head -n 1)` 有输出，并设置 `export PYTHONPATH="$BUILD_LIB:/userdata/guoxu/deepep-build/deps"`。
+- 如果看到 `bash: usr/local/nvidia/lib64: No such file or directory`，说明 `LD_LIBRARY_PATH` 被复制成两行了。请使用文档中的单行双引号写法。
 
 ## 8. 可选：安装 wheel 后测试
 
@@ -400,12 +443,81 @@ static assertion failed with "Invalid hidden"
 原因：
 
 - DeepEP combine JIT kernel 对 BF16 hidden 有对齐要求。
-- 最初使用 `hidden=128` 会失败。
+- BF16 combine 路径要求 `hidden` 是 `256` 的倍数；最初使用 `hidden=128` 会失败。
 
 处理：
 
 - 使用 `hidden=256` 或更贴近真实模型的 `7168`。
 - 当前 `tests/test_h800_smoke.py` 已使用 `hidden=256`。
+- 2026-06-18 在 `elm-test/gx-test-inst1-0` 上复测通过，输出包含 `DeepEP H800 smoke test passed`。
+
+### 9.5 直接执行 Python 文件导致 `import: command not found`
+
+现象：
+
+```text
+tests/test_h800_smoke.py: line 1: import: command not found
+syntax error near unexpected token `"MASTER_ADDR",'
+```
+
+原因：
+
+- 执行了 `tests/test_h800_smoke.py`，shell 将 Python 代码当成 shell 脚本解析。
+
+处理：
+
+```bash
+python3 tests/test_h800_smoke.py
+```
+
+### 9.6 `No module named 'deep_ep._C'`
+
+现象：
+
+```text
+ModuleNotFoundError: No module named 'deep_ep._C'
+```
+
+原因：
+
+- 已经有源码目录 `deep_ep/`，但当前 Python 没有优先加载 `build/lib...` 中编译出的 `_C*.so`。
+- 或者 `python3 setup.py build` 没有成功生成 `_C*.so`。
+
+处理：
+
+```bash
+cd /userdata/guoxu/deepep-build/DeepEP
+BUILD_LIB=$(find build -maxdepth 1 -type d -name 'lib.linux-x86_64-cpython-*' | head -n 1)
+echo "$BUILD_LIB"
+ls -l "$BUILD_LIB/deep_ep/_C"*.so
+
+export PYTHONPATH="$BUILD_LIB:/userdata/guoxu/deepep-build/deps"
+python3 tests/test_h800_smoke.py
+```
+
+如果 `ls` 找不到 `_C*.so`，先重新编译：
+
+```bash
+python3 setup.py build
+```
+
+### 9.7 `LD_LIBRARY_PATH` 被拆行
+
+现象：
+
+```text
+bash: usr/local/nvidia/lib64: No such file or directory
+```
+
+原因：
+
+- 复制命令时把 `LD_LIBRARY_PATH` 拆成了两行，例如第一行以 `:/` 结尾，第二行变成 `usr/local/nvidia/lib64`，bash 会把第二行当成命令执行。
+
+处理：
+
+```bash
+export LD_LIBRARY_PATH="/userdata/guoxu/deepep-build/deps/nvidia/nccl/lib:/usr/local/lib/python3.12/dist-packages/nvidia/nvshmem/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib64"
+```
 
 ## 10. 最终可复制命令摘要
 
@@ -430,6 +542,7 @@ rm -rf build dist *.egg-info
 python3 setup.py build
 python3 setup.py bdist_wheel
 
-export PYTHONPATH=/userdata/guoxu/deepep-build/DeepEP/build/lib.linux-x86_64-cpython-312:/userdata/guoxu/deepep-build/deps
+BUILD_LIB=$(find build -maxdepth 1 -type d -name 'lib.linux-x86_64-cpython-*' | head -n 1)
+export PYTHONPATH="$BUILD_LIB:/userdata/guoxu/deepep-build/deps"
 python3 tests/test_h800_smoke.py
 ```
